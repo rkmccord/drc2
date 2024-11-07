@@ -54,12 +54,6 @@ library(nlme)
 ```
 
 ```{r}
-install.packages("earth")
-install.packages("hal9001")
-
-install.packages(c("ranger", "arm", "xgboost", "nnls"))
-
-install.packages("remotes")
 
 library(earth)
 library(hal9001)
@@ -69,16 +63,17 @@ library(xgboost)
 library(nnls)
 library(remotes)
 library(devtools)
-
-library(remotes)
-remove.packages("sl3")
-
-remotes::install_github("tlverse/sl3@devel")
+library(cli)
 library(sl3)
+library(SuperNOVA)
+library(kableExtra)
+library(hrbrthemes)
+library(viridis)
 
-remotes::install_github("blind-contours/SuperNOVA@main")
 
-install.packages("pak")
+ls("package:SuperNOVA")
+ls("package:sl3")
+
 ```
 
 ## Read in data
