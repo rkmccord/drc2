@@ -1,0 +1,829 @@
+---
+title: "Summary stats - all North Kivu facilities"
+author: "Ryan McCord"
+date: "2024-10-18"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,tidy.opts=list(width.cutoff=80), tidy=FALSE) 
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+##Import libraries
+library(readxl) #import excel
+library(dplyr) #pipes
+library(reshape2) #reshaping data
+library(lubridate) #to deal with dates
+library(tidyverse) #data wrangling
+library(ggplot2) #for plotting
+library(margins) #for regression analysis
+library(vtable) #for dstats
+library(plm)
+library(stringr)
+
+
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(cluster)
+library(gridExtra)
+library(pdp)
+library(partykit)
+library(patchwork)
+library(corrplot)
+library(ggrepel)
+library(grid)
+library(networkD3)
+library(tidyr)
+library(htmlwidgets)
+library(party)
+library(permimp)
+library(RRF)
+library(caTools)
+library(caret)
+library(ranger)
+library(mice)
+library(nlme)
+```
+
+```{r}
+install.packages("earth")
+install.packages("hal9001")
+
+install.packages(c("ranger", "arm", "xgboost", "nnls"))
+
+install.packages("remotes")
+
+library(earth)
+library(hal9001)
+library(ranger)
+library(arm)
+library(xgboost)
+library(nnls)
+library(remotes)
+library(devtools)
+
+library(remotes)
+remove.packages("sl3")
+
+remotes::install_github("tlverse/sl3@devel")
+library(sl3)
+
+remotes::install_github("blind-contours/SuperNOVA@main")
+
+install.packages("pak")
+```
+
+## Read in data
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+csr_filepath <- "C:/Users/rkmcc/Box/2. DRC Energy in Health Facilities/4. Data/2. North Kivu SNIS data/CSR_allNorthKivu.xlsx"
+csr_filepath2 <- "C:/Users/rkmcc/Box/2. DRC Energy in Health Facilities/4. Data/2. North Kivu SNIS data/CSR_allNorthKivu2.xlsx"
+ch_filepath <- "C:/Users/rkmcc/Box/2. DRC Energy in Health Facilities/4. Data/2. North Kivu SNIS data/CH_allNorthKivu.xlsx"
+ch_filepath2 <- "C:/Users/rkmcc/Box/2. DRC Energy in Health Facilities/4. Data/2. North Kivu SNIS data/CH_allNorthKivu2.xlsx"
+hgr_filepath <- "C:/Users/rkmcc/Box/2. DRC Energy in Health Facilities/4. Data/2. North Kivu SNIS data/HGR_allNorthKivu.xlsx"
+hgr_filepath2 <- "C:/Users/rkmcc/Box/2. DRC Energy in Health Facilities/4. Data/2. North Kivu SNIS data/HGR_allNorthKivu2.xlsx"
+
+#Import variable names and labels
+csr_var_labels <- read_excel(csr_filepath, range="A1:BF1", col_names = FALSE)
+csr_var_labels2 <- read_excel(csr_filepath2, range="A1:CN1", col_names = FALSE)
+
+ch_var_labels <- read_excel(ch_filepath, range="A1:BF1", col_names = FALSE)
+ch_var_labels2 <- read_excel(ch_filepath2, range="A1:CN1", col_names = FALSE)
+
+hgr_var_labels <- read_excel(hgr_filepath, range="A1:BF1", col_names = FALSE)
+hgr_var_labels2 <- read_excel(hgr_filepath2, range="A1:CN1", col_names = FALSE)
+
+
+#Import data
+csr_data <- read_excel(csr_filepath, skip = 58)
+csr_data2 <- read_excel(csr_filepath2, skip = 37)
+
+ch_data <- read_excel(ch_filepath, skip = 58)
+ch_data2 <- read_excel(ch_filepath2, skip = 37)
+
+hgr_data <- read_excel(hgr_filepath, skip = 1)
+hgr_data2 <- read_excel(hgr_filepath2, skip = 1)
+
+
+#Assign variable names to data frame
+colnames(csr_data) <- as.character(csr_var_labels[1, ])
+csr_var_list <- data.frame(var_labels = as.character(csr_var_labels[1, ]))
+
+colnames(csr_data2) <- as.character(csr_var_labels2[1, ])
+csr_var_list2 <- data.frame(var_labels = as.character(csr_var_labels2[1, ]))
+
+colnames(ch_data) <- as.character(ch_var_labels[1, ])
+ch_var_list <- data.frame(var_labels = as.character(ch_var_labels[1, ]))
+
+colnames(ch_data2) <- as.character(ch_var_labels2[1, ])
+ch_var_list2 <- data.frame(var_labels = as.character(ch_var_labels2[1, ]))
+
+colnames(hgr_data) <- as.character(hgr_var_labels[1, ])
+hgr_var_list <- data.frame(var_labels = as.character(hgr_var_labels[1, ]))
+
+colnames(hgr_data2) <- as.character(hgr_var_labels2[1, ])
+hgr_var_list2 <- data.frame(var_labels = as.character(hgr_var_labels2[1, ]))
+
+#Create date object for time period
+csr_data$month_year <- as.Date(paste0(csr_data$periodid, "01"), format = "%Y%m%d")
+csr_data2$month_year <- as.Date(paste0(csr_data2$periodid, "01"), format = "%Y%m%d")
+
+ch_data$month_year <- as.Date(paste0(ch_data$periodid, "01"), format = "%Y%m%d")
+ch_data2$month_year <- as.Date(paste0(ch_data2$periodid, "01"), format = "%Y%m%d")
+
+hgr_data$month_year <- as.Date(paste0(hgr_data$periodid, "01"), format = "%Y%m%d")
+hgr_data2$month_year <- as.Date(paste0(hgr_data2$periodid, "01"), format = "%Y%m%d")
+
+#Remove common columns from second dataset before merging
+overlappingcolumns <- c("organisationunitid", "organisationunitcode", "organisationunitdescription", "periodid", "periodname", "periodcode", "perioddescription", "D 11.3 Poches de sang utilisées")
+csr_data2 <- csr_data2 %>% 
+  select(-all_of(overlappingcolumns))
+
+hgr_data2 <- hgr_data2 %>% 
+  select(-all_of(overlappingcolumns))
+
+ch_data2 <- ch_data2 %>% 
+  select(-all_of(overlappingcolumns))
+
+csr_data <- csr_data %>%
+  inner_join(csr_data2, by = c("organisationunitname", "month_year"))
+
+hgr_data <- hgr_data %>%
+  inner_join(hgr_data2, by = c("organisationunitname", "month_year"))
+
+ch_data <- ch_data %>%
+  inner_join(ch_data2, by = c("organisationunitname", "month_year"))
+```
+
+## Add in catchment area data
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+catchmentpop_filepath <- "C:/Users/rkmcc/Box/2. DRC Energy in Health Facilities/4. Data/DRC2_catchmentpops.xlsx"
+var_names_catchment <- read_excel(catchmentpop_filepath, range="A1:D1", col_names = FALSE)
+dps2_catchment <- read_excel(catchmentpop_filepath, skip = 1)
+
+#Assign variable labels to data frame
+colnames(dps2_catchment) <- as.character(var_names_catchment[1, ])
+
+dps2_catchment <- dps2_catchment %>%
+  rename(population = `Janvier 2024 Population de l'Aire de Santé`) %>%
+  rename(facilityname = orgunitlevel3)
+csr_catchmentpops <- dps2_catchment[, 3:4]
+
+hgr_catchmentpops <- dps2_catchment %>%
+  group_by(orgunitlevel2) %>%
+  summarize(totalpopulation = sum(population, na.rm = TRUE)) %>%
+  rename(population = totalpopulation)
+
+ch_catchmentpops <- csr_catchmentpops %>%
+  filter(facilityname %in% c("Heal Africa Aire de Santé", "Butembo Aire de Santé", "Ndosho Aire de Santé", "Matanda Aire de Santé"))
+ch_catchmentpops <- ch_catchmentpops[1:3,]
+
+#Rename facility names in both datasets for merging
+csr_catchmentpops$name_merge <- gsub(" Aire de Santé", "", csr_catchmentpops$facilityname)
+csr_data$name_merge <- gsub("nk | Centre de Santé de Référence", "", csr_data$organisationunitname)
+
+hgr_data$name_merge <- gsub("nk | Hôpital Général de Référence", "", hgr_data$organisationunitname)
+hgr_catchmentpops <- hgr_catchmentpops %>%
+  rename(name_merge = orgunitlevel2)
+
+ch_data$name_merge <- gsub("nk | Centre Hospitalier", "", ch_data$organisationunitname)
+ch_catchmentpops$name_merge <- gsub(" Aire de Santé", "", ch_catchmentpops$facilityname)
+ch_catchmentpops <- ch_catchmentpops %>%
+  mutate(name_merge = if_else(name_merge == "Ndosho", "Bethesda", name_merge))
+ch_catchmentpops <- ch_catchmentpops[,2:3]
+
+hgr_catchmentpops <- bind_rows(hgr_catchmentpops, ch_catchmentpops)
+
+#Merge catchment pops into SNIS data
+csr_data <- csr_data %>%
+  left_join(csr_catchmentpops, by = "name_merge")
+
+
+#Add in tier column to HGR & CH dataframes
+hgr_data$type = "HGR"
+ch_data$type = "CH"
+
+hospitals_data <- rbind(hgr_data, ch_data)
+
+hospitals_data$name_merge <- gsub("/Kitatumba", "", hospitals_data$name_merge)
+
+hospitals_data <- hospitals_data %>%
+  left_join(hgr_catchmentpops, by = "name_merge")
+
+```
+
+## Add zeros into dataset
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+#Replace with zeros when group mean <6
+replace_na_csr <- function(df, mean_values, group_name) {
+  for (col in c(9:58, 60:142)) {
+    column_name <- colnames(df)[col]
+    
+    df[[column_name]] <- as.numeric(df[[column_name]])
+
+    # Check if the mean value is less than 6 and not NA
+    if (!is.na(mean_values[[column_name]]) && mean_values[[column_name]] < 6) {
+      # Replace NA with 0 if the condition is met
+      df[[column_name]][is.na(df[[column_name]])] <- 0
+    }
+  }
+  return(df)
+}
+
+csr_means <- csr_data %>%
+  summarize(across(9:142, ~ mean(., na.rm = TRUE)))
+
+# Apply the function to replace NA values with zeros
+csr_data_zeros <- csr_data %>%
+  replace_na_csr(., csr_means)
+
+replace_na_hosp <- function(df, mean_values, group_name) {
+  for (col in c(9:58, 60:142)) {
+    column_name <- colnames(df)[col]
+    
+    df[[column_name]] <- as.numeric(df[[column_name]])
+
+    # Check if the mean value is less than 6 and not NA
+    if (!is.na(mean_values[[column_name]]) && mean_values[[column_name]] < 6) {
+      # Replace NA with 0 if the condition is met
+      df[[column_name]][is.na(df[[column_name]])] <- 0
+    }
+  }
+  return(df)
+}
+
+hospital_means <- hospitals_data %>%
+  summarize(across(9:142, ~ mean(., na.rm = TRUE)))
+
+# Apply the function to replace NA values with zeros
+hospitals_data_zeros <- hospitals_data %>%
+  replace_na_hosp(., hospital_means)
+
+```
+
+## Subset data to include just the 25 facilities being monitored + merge in PQ data
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+pqr_filepath <- "C:/Users/rkmcc/Box/2. DRC Energy in Health Facilities/4. Data/dps2_current_data.xlsx"
+
+#Import variable names and labels
+pqr_names <- read_excel(pqr_filepath, range="A1:GZ1", col_names = FALSE)
+pqr_labels <- read_excel(pqr_filepath, range="A2:GZ2", col_names = FALSE)
+
+#Import data
+pqr_data <- read_excel(pqr_filepath, skip = 2)
+
+#Assign variable names to data frame
+colnames(pqr_data) <- as.character(pqr_names[1, ])
+
+pqr_data <- pqr_data %>%
+  select(facilityname, month_year, pqr_score, reliability_score, tier)
+
+pqr_data$month_year <- as.Date(pqr_data$month_year, format = "%Y%m%d")
+
+#4 CHs; 10 HGRs; 4 CSRs
+
+csr_pqr <- pqr_data %>%
+  filter(tier=="CSR")
+csr_pqr$name_merge <- gsub("CSR ", "", csr_pqr$facilityname)
+csr_pqr <- csr_pqr %>%
+  select(name_merge, month_year, pqr_score, reliability_score)
+
+hgr_pqr <- pqr_data %>%
+  filter(tier=="HGR")
+hgr_pqr$name_merge <- gsub("HGR ", "", hgr_pqr$facilityname)
+hgr_pqr <- hgr_pqr %>%
+  select(name_merge, month_year, pqr_score, reliability_score)
+
+ch_pqr <- pqr_data %>%
+  filter(tier=="CH")
+ch_pqr$name_merge1 <- gsub("CH ", "", ch_pqr$facilityname)
+ch_pqr$name_merge <- gsub("UCG ", "", ch_pqr$name_merge1)
+ch_pqr <- ch_pqr %>%
+  select(name_merge, month_year, pqr_score, reliability_score)
+
+hospitals_pqr <- rbind(hgr_pqr, ch_pqr)
+
+hospitals_pqr <- hospitals_pqr %>%
+  mutate(name_merge = if_else(name_merge == "Bethesda Ndosho", "Bethesda", name_merge))
+
+# Merge PQR data with SNIS data
+hospitals_pqr_SNIS <- hospitals_pqr %>%
+  left_join(hospitals_data_zeros, by = c("name_merge", "month_year"))
+csr_pqr_SNIS <- csr_pqr %>%
+  left_join(csr_data_zeros, by = c("name_merge", "month_year"))
+
+```
+
+## Create dataframe with outcome variables
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# CSRs
+csr_outcomes <- csr_data_zeros %>%
+  mutate(
+    utilizationrate = if_else(population > 0, (`A 1.1 Cas reçus` / population) * 100, NA_real_),
+    neonatal_mort = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.4 Décès nouveaux nés ≤ 28 jours` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    matern_mort = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.4 Décès maternels revus` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    matern_compl = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.6 Accouchées avec complications Post-Partum` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    allcause_mort = if_else(`A 1.1 Cas reçus` > 0, ((`D 8.2 Décès après 48 h` + `D 8.2 Décès avant 48 h`) / `A 1.1 Cas reçus`) * 100000, NA_real_),
+    bloodbags = `D 11.3 Poches de sang utilisées`,
+    refer_csrTOhgr = if_else(`A 1.1 Cas reçus` > 0, (`D 6.3 Consultations référés vers l'HGRP` / `A 1.1 Cas reçus`) * 100, NA_real_),
+    surg_mort = if_else(rowSums(select(., starts_with('D 11.1')), na.rm = TRUE) + 
+                        rowSums(select(., starts_with('D 11.2')), na.rm = TRUE) > 0, 
+                        (`D 8.2 Décès après 48 h Chirurgie` /
+                         (rowSums(select(., starts_with('D 11.1')), na.rm = TRUE) + 
+                          rowSums(select(., starts_with('D 11.2')), na.rm = TRUE))) * 100000, NA_real_),
+    under5_mort = if_else(`A 1.1 Cas reçus <5 ans` > 0, 
+                          (rowSums(select(., starts_with('D 8.2 Total décès enfants <5ans')), na.rm = TRUE) / `A 1.1 Cas reçus <5 ans`) * 100000, NA_real_),
+    resp_mort = if_else(`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire` > 0, 
+                        (`D 9.6 Détresse respiratoire dcd`/`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire`) * 100000, 
+                        NA_real_),
+    share_respdeath = if_else(`A 1.1 Cas reçus` > 0, 
+                        (`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire`/`A 1.1 Cas reçus`) * 100, 
+                        NA_real_)
+  ) %>%
+  select(organisationunitname, month_year, `A 1.1 Cas reçus`, utilizationrate, neonatal_mort, matern_mort, matern_compl, allcause_mort, bloodbags, refer_csrTOhgr, surg_mort, under5_mort, resp_mort, share_respdeath)
+
+csr_poorpower <- csr_pqr_SNIS %>%
+  filter(pqr_score < 0.9)
+csr_poorpower_outcomes <- csr_poorpower %>%
+  mutate(
+    utilizationrate = if_else(population > 0, (`A 1.1 Cas reçus` / population) * 100, NA_real_),
+    neonatal_mort = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.4 Décès nouveaux nés ≤ 28 jours` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    matern_mort = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.4 Décès maternels revus` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    matern_compl = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.6 Accouchées avec complications Post-Partum` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    allcause_mort = if_else(`A 1.1 Cas reçus` > 0, ((`D 8.2 Décès après 48 h` + `D 8.2 Décès avant 48 h`) / `A 1.1 Cas reçus`) * 100000, NA_real_),
+    bloodbags = `D 11.3 Poches de sang utilisées`,
+    refer_csrTOhgr = if_else(`A 1.1 Cas reçus` > 0, (`D 6.3 Consultations référés vers l'HGRP` / `A 1.1 Cas reçus`) * 100, NA_real_),
+    surg_mort = if_else(rowSums(select(., starts_with('D 11.1')), na.rm = TRUE) + 
+                        rowSums(select(., starts_with('D 11.2')), na.rm = TRUE) > 0, 
+                        (`D 8.2 Décès après 48 h Chirurgie` /
+                         (rowSums(select(., starts_with('D 11.1')), na.rm = TRUE) + 
+                          rowSums(select(., starts_with('D 11.2')), na.rm = TRUE))) * 100000, NA_real_),
+    under5_mort = if_else(`A 1.1 Cas reçus <5 ans` > 0, 
+                          (rowSums(select(., starts_with('D 8.2 Total décès enfants <5ans')), na.rm = TRUE) / `A 1.1 Cas reçus <5 ans`) * 100000, NA_real_),
+    resp_mort = if_else(`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire` > 0, 
+                        (`D 9.6 Détresse respiratoire dcd`/`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire`) * 100000, 
+                        NA_real_),
+    share_respdeath = if_else(`A 1.1 Cas reçus` > 0, 
+                        (`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire`/`A 1.1 Cas reçus`) * 100, 
+                        NA_real_)
+  ) %>%
+  select(organisationunitname, month_year, utilizationrate, neonatal_mort, matern_mort, matern_compl, allcause_mort, bloodbags, refer_csrTOhgr, surg_mort, under5_mort, resp_mort, `A 1.1 Cas reçus`, share_respdeath)
+
+csr_goodpower <- csr_pqr_SNIS %>%
+  filter(pqr_score >= 0.99)
+csr_goodpower_outcomes <- csr_goodpower %>%
+  mutate(
+    utilizationrate = if_else(population > 0, (`A 1.1 Cas reçus` / population) * 100, NA_real_),
+    neonatal_mort = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.4 Décès nouveaux nés ≤ 28 jours` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    matern_mort = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.4 Décès maternels revus` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    matern_compl = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.6 Accouchées avec complications Post-Partum` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    allcause_mort = if_else(`A 1.1 Cas reçus` > 0, ((`D 8.2 Décès après 48 h` + `D 8.2 Décès avant 48 h`) / `A 1.1 Cas reçus`) * 100000, NA_real_),
+    bloodbags = `D 11.3 Poches de sang utilisées`,
+    refer_csrTOhgr = if_else(`A 1.1 Cas reçus` > 0, (`D 6.3 Consultations référés vers l'HGRP` / `A 1.1 Cas reçus`) * 100, NA_real_),
+    surg_mort = if_else(rowSums(select(., starts_with('D 11.1')), na.rm = TRUE) + 
+                        rowSums(select(., starts_with('D 11.2')), na.rm = TRUE) > 0, 
+                        (`D 8.2 Décès après 48 h Chirurgie` /
+                         (rowSums(select(., starts_with('D 11.1')), na.rm = TRUE) + 
+                          rowSums(select(., starts_with('D 11.2')), na.rm = TRUE))) * 100000, NA_real_),
+    under5_mort = if_else(`A 1.1 Cas reçus <5 ans` > 0, 
+                          (rowSums(select(., starts_with('D 8.2 Total décès enfants <5ans')), na.rm = TRUE) / `A 1.1 Cas reçus <5 ans`) * 100000, NA_real_),
+    resp_mort = if_else(`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire` > 0, 
+                        (`D 9.6 Détresse respiratoire dcd`/`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire`) * 100000, 
+                        NA_real_),
+    share_respdeath = if_else(`A 1.1 Cas reçus` > 0, 
+                        (`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire`/`A 1.1 Cas reçus`) * 100, 
+                        NA_real_)
+  ) %>%
+  select(organisationunitname, month_year, utilizationrate, neonatal_mort, matern_mort, matern_compl, allcause_mort, bloodbags, refer_csrTOhgr, surg_mort, under5_mort, resp_mort, `A 1.1 Cas reçus`, share_respdeath)
+
+csr_reliable <- csr_pqr_SNIS %>%
+  filter(reliability_score >= 0.99)
+csr_reliable_outcomes <- csr_reliable %>%
+  mutate(
+    utilizationrate = if_else(population > 0, (`A 1.1 Cas reçus` / population) * 100, NA_real_),
+    neonatal_mort = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.4 Décès nouveaux nés ≤ 28 jours` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    matern_mort = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.4 Décès maternels revus` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    matern_compl = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.6 Accouchées avec complications Post-Partum` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    allcause_mort = if_else(`A 1.1 Cas reçus` > 0, ((`D 8.2 Décès après 48 h` + `D 8.2 Décès avant 48 h`) / `A 1.1 Cas reçus`) * 100000, NA_real_),
+    bloodbags = `D 11.3 Poches de sang utilisées`,
+    refer_csrTOhgr = if_else(`A 1.1 Cas reçus` > 0, (`D 6.3 Consultations référés vers l'HGRP` / `A 1.1 Cas reçus`) * 100, NA_real_),
+    surg_mort = if_else(rowSums(select(., starts_with('D 11.1')), na.rm = TRUE) + 
+                        rowSums(select(., starts_with('D 11.2')), na.rm = TRUE) > 0, 
+                        (`D 8.2 Décès après 48 h Chirurgie` /
+                         (rowSums(select(., starts_with('D 11.1')), na.rm = TRUE) + 
+                          rowSums(select(., starts_with('D 11.2')), na.rm = TRUE))) * 100000, NA_real_),
+    under5_mort = if_else(`A 1.1 Cas reçus <5 ans` > 0, 
+                          (rowSums(select(., starts_with('D 8.2 Total décès enfants <5ans')), na.rm = TRUE) / `A 1.1 Cas reçus <5 ans`) * 100000, NA_real_),
+    resp_mort = if_else(`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire` > 0, 
+                        (`D 9.6 Détresse respiratoire dcd`/`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire`) * 100000, 
+                        NA_real_),
+    share_respdeath = if_else(`A 1.1 Cas reçus` > 0, 
+                        (`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire`/`A 1.1 Cas reçus`) * 100, 
+                        NA_real_)
+  ) %>%
+  select(organisationunitname, month_year, utilizationrate, neonatal_mort, matern_mort, matern_compl, allcause_mort, bloodbags, refer_csrTOhgr, surg_mort, under5_mort, resp_mort, `A 1.1 Cas reçus`, share_respdeath)
+
+# HOSPITALS
+hospitals_outcomes <- hospitals_data_zeros %>%
+  mutate(
+    utilizationrate = if_else(population > 0, (`A 1.1 Cas reçus` / population) * 100, NA_real_),
+    neonatal_mort = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.4 Décès nouveaux nés ≤ 28 jours` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    matern_mort = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.4 Décès maternels revus` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    matern_compl = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.6 Accouchées avec complications Post-Partum` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    allcause_mort = if_else(`A 1.1 Cas reçus` > 0, ((`D 8.2 Décès après 48 h` + `D 8.2 Décès avant 48 h`) / `A 1.1 Cas reçus`) * 100000, NA_real_),
+    bloodbags = `D 11.3 Poches de sang utilisées`,
+    refer_csrTOhgr = if_else(`A 1.1 Cas reçus` > 0, (`D 6.3 Cas Référé par le CS` / `A 1.1 Cas reçus`) * 100, NA_real_),
+    surg_mort = if_else(rowSums(select(., starts_with('D 11.1')), na.rm = TRUE) + 
+                        rowSums(select(., starts_with('D 11.2')), na.rm = TRUE) > 0, 
+                        (`D 8.2 Décès après 48 h Chirurgie` /
+                         (rowSums(select(., starts_with('D 11.1')), na.rm = TRUE) + 
+                          rowSums(select(., starts_with('D 11.2')), na.rm = TRUE))) * 100000, NA_real_),
+    under5_mort = if_else(`A 1.1 Cas reçus <5 ans` > 0, 
+                          (rowSums(select(., starts_with('D 8.2 Total décès enfants <5ans')), na.rm = TRUE) / `A 1.1 Cas reçus <5 ans`) * 100000, 
+                          NA_real_),
+    resp_mort = if_else(`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire` > 0, 
+                        (`D 9.6 Détresse respiratoire dcd`/`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire`) * 100000, 
+                        NA_real_),
+    share_respdeath = if_else(`A 1.1 Cas reçus` > 0, 
+                        (`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire`/`A 1.1 Cas reçus`) * 100, 
+                        NA_real_)
+  ) %>%
+  select(organisationunitname, month_year, utilizationrate, neonatal_mort, matern_mort, matern_compl, allcause_mort, bloodbags, refer_csrTOhgr, surg_mort, under5_mort, resp_mort, `A 1.1 Cas reçus`, share_respdeath)
+
+
+hosp_poorpower <- hospitals_pqr_SNIS %>%
+  filter(pqr_score < 0.9)
+hosp_poorpower_outcomes <- hosp_poorpower %>%
+  mutate(
+    utilizationrate = if_else(population > 0, (`A 1.1 Cas reçus` / population) * 100, NA_real_),
+    neonatal_mort = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.4 Décès nouveaux nés ≤ 28 jours` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    matern_mort = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.4 Décès maternels revus` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    matern_compl = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.6 Accouchées avec complications Post-Partum` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    allcause_mort = if_else(`A 1.1 Cas reçus` > 0, ((`D 8.2 Décès après 48 h` + `D 8.2 Décès avant 48 h`) / `A 1.1 Cas reçus`) * 100000, NA_real_),
+    bloodbags = `D 11.3 Poches de sang utilisées`,
+    refer_csrTOhgr = if_else(`A 1.1 Cas reçus` > 0, (`D 6.3 Cas Référé par le CS` / `A 1.1 Cas reçus`) * 100, NA_real_),
+    surg_mort = if_else(rowSums(select(., starts_with('D 11.1')), na.rm = TRUE) + 
+                        rowSums(select(., starts_with('D 11.2')), na.rm = TRUE) > 0, 
+                        (`D 8.2 Décès après 48 h Chirurgie` /
+                         (rowSums(select(., starts_with('D 11.1')), na.rm = TRUE) + 
+                          rowSums(select(., starts_with('D 11.2')), na.rm = TRUE))) * 100000, NA_real_),
+    under5_mort = if_else(`A 1.1 Cas reçus <5 ans` > 0, 
+                          (rowSums(select(., starts_with('D 8.2 Total décès enfants <5ans')), na.rm = TRUE) / `A 1.1 Cas reçus <5 ans`) * 100000, NA_real_),
+    resp_mort = if_else(`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire` > 0, 
+                        (`D 9.6 Détresse respiratoire dcd`/`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire`) * 100000, 
+                        NA_real_),
+    share_respdeath = if_else(`A 1.1 Cas reçus` > 0, 
+                        (`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire`/`A 1.1 Cas reçus`) * 100, 
+                        NA_real_)
+  ) %>%
+  select(organisationunitname, month_year, utilizationrate, neonatal_mort, matern_mort, matern_compl, allcause_mort, bloodbags, refer_csrTOhgr, surg_mort, under5_mort, resp_mort, `A 1.1 Cas reçus`, share_respdeath)
+
+hosp_goodpower <- hospitals_pqr_SNIS %>%
+  filter(pqr_score >= 0.99) %>%
+  filter(name_merge != "Walikale") %>%
+  filter(name_merge != "Masisi")
+hosp_goodpower_outcomes <- hosp_goodpower %>%
+  mutate(
+    utilizationrate = if_else(population > 0, (`A 1.1 Cas reçus` / population) * 100, NA_real_),
+    neonatal_mort = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.4 Décès nouveaux nés ≤ 28 jours` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    matern_mort = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.4 Décès maternels revus` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    matern_compl = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.6 Accouchées avec complications Post-Partum` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    allcause_mort = if_else(`A 1.1 Cas reçus` > 0, ((`D 8.2 Décès après 48 h` + `D 8.2 Décès avant 48 h`) / `A 1.1 Cas reçus`) * 100000, NA_real_),
+    bloodbags = `D 11.3 Poches de sang utilisées`,
+    refer_csrTOhgr = if_else(`A 1.1 Cas reçus` > 0, (`D 6.3 Cas Référé par le CS` / `A 1.1 Cas reçus`) * 100, NA_real_),
+    surg_mort = if_else(rowSums(select(., starts_with('D 11.1')), na.rm = TRUE) + 
+                        rowSums(select(., starts_with('D 11.2')), na.rm = TRUE) > 0, 
+                        (`D 8.2 Décès après 48 h Chirurgie` /
+                         (rowSums(select(., starts_with('D 11.1')), na.rm = TRUE) + 
+                          rowSums(select(., starts_with('D 11.2')), na.rm = TRUE))) * 100000, NA_real_),
+    under5_mort = if_else(`A 1.1 Cas reçus <5 ans` > 0, 
+                          (rowSums(select(., starts_with('D 8.2 Total décès enfants <5ans')), na.rm = TRUE) / `A 1.1 Cas reçus <5 ans`) * 100000, NA_real_),
+    resp_mort = if_else(`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire` > 0, 
+                        (`D 9.6 Détresse respiratoire dcd`/`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire`) * 100000, 
+                        NA_real_),
+    share_respdeath = if_else(`A 1.1 Cas reçus` > 0, 
+                        (`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire`/`A 1.1 Cas reçus`) * 100, 
+                        NA_real_)
+  ) %>%
+  select(organisationunitname, month_year, utilizationrate, neonatal_mort, matern_mort, matern_compl, allcause_mort, bloodbags, refer_csrTOhgr, surg_mort, under5_mort, resp_mort, `A 1.1 Cas reçus`, share_respdeath)
+
+hosp_reliable <- hospitals_pqr_SNIS %>%
+  filter(reliability_score >= 0.99) %>%
+  filter(name_merge != "Walikale") %>%
+  filter(name_merge != "Masisi")
+hosp_reliable_outcomes <- hosp_reliable %>%
+  mutate(
+    utilizationrate = if_else(population > 0, (`A 1.1 Cas reçus` / population) * 100, NA_real_),
+    neonatal_mort = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.4 Décès nouveaux nés ≤ 28 jours` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    matern_mort = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.4 Décès maternels revus` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    matern_compl = if_else(`A 2.3 Naissances vivantes` > 0, (`A 2.6 Accouchées avec complications Post-Partum` / `A 2.3 Naissances vivantes`) * 100000, NA_real_),
+    allcause_mort = if_else(`A 1.1 Cas reçus` > 0, ((`D 8.2 Décès après 48 h` + `D 8.2 Décès avant 48 h`) / `A 1.1 Cas reçus`) * 100000, NA_real_),
+    bloodbags = `D 11.3 Poches de sang utilisées`,
+    refer_csrTOhgr = if_else(`A 1.1 Cas reçus` > 0, (`D 6.3 Cas Référé par le CS` / `A 1.1 Cas reçus`) * 100, NA_real_),
+    surg_mort = if_else(rowSums(select(., starts_with('D 11.1')), na.rm = TRUE) + 
+                        rowSums(select(., starts_with('D 11.2')), na.rm = TRUE) > 0, 
+                        (`D 8.2 Décès après 48 h Chirurgie` /
+                         (rowSums(select(., starts_with('D 11.1')), na.rm = TRUE) + 
+                          rowSums(select(., starts_with('D 11.2')), na.rm = TRUE))) * 100000, NA_real_),
+    under5_mort = if_else(`A 1.1 Cas reçus <5 ans` > 0, 
+                          (rowSums(select(., starts_with('D 8.2 Total décès enfants <5ans')), na.rm = TRUE) / `A 1.1 Cas reçus <5 ans`) * 100000, NA_real_),
+    resp_mort = if_else(`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire` > 0, 
+                        (`D 9.6 Détresse respiratoire dcd`/`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire`) * 100000, 
+                        NA_real_),
+    share_respdeath = if_else(`A 1.1 Cas reçus` > 0, 
+                        (`D 6.2 Nouveaux cas vus aux urgences Détresse respiratoire`/`A 1.1 Cas reçus`) * 100, 
+                        NA_real_)
+  ) %>%
+  select(organisationunitname, month_year, utilizationrate, neonatal_mort, matern_mort, matern_compl, allcause_mort, bloodbags, refer_csrTOhgr, surg_mort, under5_mort, resp_mort, `A 1.1 Cas reçus`, share_respdeath)
+
+```
+
+## Calculate summary stats for outcome vars
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# CSRs
+csr_dstats <- csr_outcomes %>%
+  summarize(
+    mean_utilizationrate = mean(utilizationrate, na.rm = TRUE),
+    sd_utilizationrate = sd(utilizationrate, na.rm = TRUE),
+    mean_neonatal_mort = mean(neonatal_mort, na.rm = TRUE),
+    sd_neonatal_mort = sd(neonatal_mort, na.rm = TRUE),
+    mean_matern_mort = mean(matern_mort, na.rm = TRUE),
+    sd_matern_mort = sd(matern_mort, na.rm = TRUE),
+    mean_matern_compl = mean(matern_compl, na.rm = TRUE),
+    sd_matern_compl = sd(matern_compl, na.rm = TRUE),
+    mean_allcause_mort = mean(allcause_mort, na.rm = TRUE),
+    sd_allcause_mort = sd(allcause_mort, na.rm = TRUE),
+    mean_bloodbags = mean(bloodbags, na.rm = TRUE),
+    sd_bloodbags = sd(bloodbags, na.rm = TRUE),
+    mean_refer_csrTOhgr = mean(refer_csrTOhgr, na.rm = TRUE),
+    sd_refer_csrTOhgr = sd(refer_csrTOhgr, na.rm = TRUE),
+    mean_surg_mort = mean(surg_mort, na.rm = TRUE),
+    sd_surg_mort = sd(surg_mort, na.rm = TRUE),
+    mean_under5_mort = mean(under5_mort, na.rm = TRUE),
+    sd_under5_mort = sd(under5_mort, na.rm = TRUE),
+    mean_resp_mort = mean(resp_mort, na.rm = TRUE),
+    sd_resp_mort = sd(resp_mort, na.rm = TRUE),
+    mean_resp_deathshare = mean(share_respdeath, na.rm = TRUE),
+    sd_resp_deathshare = sd(share_respdeath, na.rm = TRUE),
+    mean_pt_count = mean(`A 1.1 Cas reçus`, na.rm = TRUE),
+    sd_pt_count = sd(`A 1.1 Cas reçus`, na.rm = TRUE),
+    med_pt_count = median(`A 1.1 Cas reçus`, na.rm = TRUE)
+  )
+
+csr_poorpower_dstats <- csr_poorpower_outcomes %>%
+  summarize(
+    mean_utilizationrate = mean(utilizationrate, na.rm = TRUE),
+    sd_utilizationrate = sd(utilizationrate, na.rm = TRUE),
+    mean_neonatal_mort = mean(neonatal_mort, na.rm = TRUE),
+    sd_neonatal_mort = sd(neonatal_mort, na.rm = TRUE),
+    mean_matern_mort = mean(matern_mort, na.rm = TRUE),
+    sd_matern_mort = sd(matern_mort, na.rm = TRUE),
+    mean_matern_compl = mean(matern_compl, na.rm = TRUE),
+    sd_matern_compl = sd(matern_compl, na.rm = TRUE),
+    mean_allcause_mort = mean(allcause_mort, na.rm = TRUE),
+    sd_allcause_mort = sd(allcause_mort, na.rm = TRUE),
+    mean_bloodbags = mean(bloodbags, na.rm = TRUE),
+    sd_bloodbags = sd(bloodbags, na.rm = TRUE),
+    mean_refer_csrTOhgr = mean(refer_csrTOhgr, na.rm = TRUE),
+    sd_refer_csrTOhgr = sd(refer_csrTOhgr, na.rm = TRUE),
+    mean_surg_mort = mean(surg_mort, na.rm = TRUE),
+    sd_surg_mort = sd(surg_mort, na.rm = TRUE),
+    mean_under5_mort = mean(under5_mort, na.rm = TRUE),
+    sd_under5_mort = sd(under5_mort, na.rm = TRUE),
+    mean_resp_mort = mean(resp_mort, na.rm = TRUE),
+    sd_resp_mort = sd(resp_mort, na.rm = TRUE),
+    mean_resp_deathshare = mean(share_respdeath, na.rm = TRUE),
+    sd_resp_deathshare = sd(share_respdeath, na.rm = TRUE),
+    mean_pt_count = mean(`A 1.1 Cas reçus`, na.rm = TRUE),
+    sd_pt_count = sd(`A 1.1 Cas reçus`, na.rm = TRUE),
+    med_pt_count = median(`A 1.1 Cas reçus`, na.rm = TRUE)
+    )
+
+csr_goodpower_dstats <- csr_goodpower_outcomes %>%
+  summarize(
+    mean_utilizationrate = mean(utilizationrate, na.rm = TRUE),
+    sd_utilizationrate = sd(utilizationrate, na.rm = TRUE),
+    mean_neonatal_mort = mean(neonatal_mort, na.rm = TRUE),
+    sd_neonatal_mort = sd(neonatal_mort, na.rm = TRUE),
+    mean_matern_mort = mean(matern_mort, na.rm = TRUE),
+    sd_matern_mort = sd(matern_mort, na.rm = TRUE),
+    mean_matern_compl = mean(matern_compl, na.rm = TRUE),
+    sd_matern_compl = sd(matern_compl, na.rm = TRUE),
+    mean_allcause_mort = mean(allcause_mort, na.rm = TRUE),
+    sd_allcause_mort = sd(allcause_mort, na.rm = TRUE),
+    mean_bloodbags = mean(bloodbags, na.rm = TRUE),
+    sd_bloodbags = sd(bloodbags, na.rm = TRUE),
+    mean_refer_csrTOhgr = mean(refer_csrTOhgr, na.rm = TRUE),
+    sd_refer_csrTOhgr = sd(refer_csrTOhgr, na.rm = TRUE),
+    mean_surg_mort = mean(surg_mort, na.rm = TRUE),
+    sd_surg_mort = sd(surg_mort, na.rm = TRUE),
+    mean_under5_mort = mean(under5_mort, na.rm = TRUE),
+    sd_under5_mort = sd(under5_mort, na.rm = TRUE),
+    mean_resp_mort = mean(resp_mort, na.rm = TRUE),
+    sd_resp_mort = sd(resp_mort, na.rm = TRUE),
+    mean_resp_deathshare = mean(share_respdeath, na.rm = TRUE),
+    sd_resp_deathshare = sd(share_respdeath, na.rm = TRUE),
+    mean_pt_count = mean(`A 1.1 Cas reçus`, na.rm = TRUE),
+    sd_pt_count = sd(`A 1.1 Cas reçus`, na.rm = TRUE)
+  )
+
+csr_reliable_dstats <- csr_reliable_outcomes %>%
+  summarize(
+    mean_utilizationrate = mean(utilizationrate, na.rm = TRUE),
+    sd_utilizationrate = sd(utilizationrate, na.rm = TRUE),
+    mean_neonatal_mort = mean(neonatal_mort, na.rm = TRUE),
+    sd_neonatal_mort = sd(neonatal_mort, na.rm = TRUE),
+    mean_matern_mort = mean(matern_mort, na.rm = TRUE),
+    sd_matern_mort = sd(matern_mort, na.rm = TRUE),
+    mean_matern_compl = mean(matern_compl, na.rm = TRUE),
+    sd_matern_compl = sd(matern_compl, na.rm = TRUE),
+    mean_allcause_mort = mean(allcause_mort, na.rm = TRUE),
+    sd_allcause_mort = sd(allcause_mort, na.rm = TRUE),
+    mean_bloodbags = mean(bloodbags, na.rm = TRUE),
+    sd_bloodbags = sd(bloodbags, na.rm = TRUE),
+    mean_refer_csrTOhgr = mean(refer_csrTOhgr, na.rm = TRUE),
+    sd_refer_csrTOhgr = sd(refer_csrTOhgr, na.rm = TRUE),
+    mean_surg_mort = mean(surg_mort, na.rm = TRUE),
+    sd_surg_mort = sd(surg_mort, na.rm = TRUE),
+    mean_under5_mort = mean(under5_mort, na.rm = TRUE),
+    sd_under5_mort = sd(under5_mort, na.rm = TRUE),
+    mean_resp_mort = mean(resp_mort, na.rm = TRUE),
+    sd_resp_mort = sd(resp_mort, na.rm = TRUE),
+    mean_resp_deathshare = mean(share_respdeath, na.rm = TRUE),
+    sd_resp_deathshare = sd(share_respdeath, na.rm = TRUE),
+    mean_pt_count = mean(`A 1.1 Cas reçus`, na.rm = TRUE),
+    sd_pt_count = sd(`A 1.1 Cas reçus`, na.rm = TRUE)
+  )
+
+## HOSPITALS
+hospitals_dstats <- hospitals_outcomes %>%
+  summarize(
+    mean_utilizationrate = mean(utilizationrate, na.rm = TRUE),
+    sd_utilizationrate = sd(utilizationrate, na.rm = TRUE),
+    mean_neonatal_mort = mean(neonatal_mort, na.rm = TRUE),
+    sd_neonatal_mort = sd(neonatal_mort, na.rm = TRUE),
+    mean_matern_mort = mean(matern_mort, na.rm = TRUE),
+    sd_matern_mort = sd(matern_mort, na.rm = TRUE),
+    mean_matern_compl = mean(matern_compl, na.rm = TRUE),
+    sd_matern_compl = sd(matern_compl, na.rm = TRUE),
+    mean_allcause_mort = mean(allcause_mort, na.rm = TRUE),
+    sd_allcause_mort = sd(allcause_mort, na.rm = TRUE),
+    mean_bloodbags = mean(bloodbags, na.rm = TRUE),
+    sd_bloodbags = sd(bloodbags, na.rm = TRUE),
+    mean_refer_csrTOhgr = mean(refer_csrTOhgr, na.rm = TRUE),
+    sd_refer_csrTOhgr = sd(refer_csrTOhgr, na.rm = TRUE),
+    mean_surg_mort = mean(surg_mort, na.rm = TRUE),
+    sd_surg_mort = sd(surg_mort, na.rm = TRUE),
+    mean_under5_mort = mean(under5_mort, na.rm = TRUE),
+    sd_under5_mort = sd(under5_mort, na.rm = TRUE),
+    mean_resp_mort = mean(resp_mort, na.rm = TRUE),
+    sd_resp_mort = sd(resp_mort, na.rm = TRUE),
+    mean_resp_deathshare = mean(share_respdeath, na.rm = TRUE),
+    sd_resp_deathshare = sd(share_respdeath, na.rm = TRUE),
+    mean_pt_count = mean(`A 1.1 Cas reçus`, na.rm = TRUE),
+    sd_pt_count = sd(`A 1.1 Cas reçus`, na.rm = TRUE),
+    med_pt_count = median(`A 1.1 Cas reçus`, na.rm = TRUE)
+  )
+
+perc_totalmort <- quantile(hospitals_outcomes$allcause_mort, probs = c(0.25, 0.75), na.rm = TRUE)
+perc_totalmort_csr <- quantile(csr_outcomes$allcause_mort, probs = c(0.25, 0.4, 0.75), na.rm = TRUE)
+
+
+percentiles <- quantile(hospitals_outcomes$`A 1.1 Cas reçus`, probs = c(0.25, 0.75, 0.9), na.rm = TRUE)
+
+percentiles_csr <- quantile(csr_outcomes$`A 1.1 Cas reçus`, probs = c(0.25, 0.75), na.rm = TRUE)
+
+
+hosp_poorpower_dstats <- hosp_poorpower_outcomes %>%
+  summarize(
+    mean_utilizationrate = mean(utilizationrate, na.rm = TRUE),
+    sd_utilizationrate = sd(utilizationrate, na.rm = TRUE),
+    mean_neonatal_mort = mean(neonatal_mort, na.rm = TRUE),
+    sd_neonatal_mort = sd(neonatal_mort, na.rm = TRUE),
+    mean_matern_mort = mean(matern_mort, na.rm = TRUE),
+    sd_matern_mort = sd(matern_mort, na.rm = TRUE),
+    mean_matern_compl = mean(matern_compl, na.rm = TRUE),
+    sd_matern_compl = sd(matern_compl, na.rm = TRUE),
+    mean_allcause_mort = mean(allcause_mort, na.rm = TRUE),
+    sd_allcause_mort = sd(allcause_mort, na.rm = TRUE),
+    mean_bloodbags = mean(bloodbags, na.rm = TRUE),
+    sd_bloodbags = sd(bloodbags, na.rm = TRUE),
+    mean_refer_csrTOhgr = mean(refer_csrTOhgr, na.rm = TRUE),
+    sd_refer_csrTOhgr = sd(refer_csrTOhgr, na.rm = TRUE),
+    mean_surg_mort = mean(surg_mort, na.rm = TRUE),
+    sd_surg_mort = sd(surg_mort, na.rm = TRUE),
+    mean_under5_mort = mean(under5_mort, na.rm = TRUE),
+    sd_under5_mort = sd(under5_mort, na.rm = TRUE),
+    mean_resp_mort = mean(resp_mort, na.rm = TRUE),
+    sd_resp_mort = sd(resp_mort, na.rm = TRUE),
+    mean_resp_deathshare = mean(share_respdeath, na.rm = TRUE),
+    sd_resp_deathshare = sd(share_respdeath, na.rm = TRUE),
+    mean_pt_count = mean(`A 1.1 Cas reçus`, na.rm = TRUE),
+    sd_pt_count = sd(`A 1.1 Cas reçus`, na.rm = TRUE)
+  )
+
+hosp_goodpower_dstats <- hosp_goodpower_outcomes %>%
+  summarize(
+    mean_utilizationrate = mean(utilizationrate, na.rm = TRUE),
+    sd_utilizationrate = sd(utilizationrate, na.rm = TRUE),
+    mean_neonatal_mort = mean(neonatal_mort, na.rm = TRUE),
+    sd_neonatal_mort = sd(neonatal_mort, na.rm = TRUE),
+    mean_matern_mort = mean(matern_mort, na.rm = TRUE),
+    sd_matern_mort = sd(matern_mort, na.rm = TRUE),
+    mean_matern_compl = mean(matern_compl, na.rm = TRUE),
+    sd_matern_compl = sd(matern_compl, na.rm = TRUE),
+    mean_allcause_mort = mean(allcause_mort, na.rm = TRUE),
+    sd_allcause_mort = sd(allcause_mort, na.rm = TRUE),
+    mean_bloodbags = mean(bloodbags, na.rm = TRUE),
+    sd_bloodbags = sd(bloodbags, na.rm = TRUE),
+    mean_refer_csrTOhgr = mean(refer_csrTOhgr, na.rm = TRUE),
+    sd_refer_csrTOhgr = sd(refer_csrTOhgr, na.rm = TRUE),
+    mean_surg_mort = mean(surg_mort, na.rm = TRUE),
+    sd_surg_mort = sd(surg_mort, na.rm = TRUE),
+    mean_under5_mort = mean(under5_mort, na.rm = TRUE),
+    sd_under5_mort = sd(under5_mort, na.rm = TRUE),
+    mean_resp_mort = mean(resp_mort, na.rm = TRUE),
+    sd_resp_mort = sd(resp_mort, na.rm = TRUE),
+    mean_resp_deathshare = mean(share_respdeath, na.rm = TRUE),
+    sd_resp_deathshare = sd(share_respdeath, na.rm = TRUE),
+    mean_pt_count = mean(`A 1.1 Cas reçus`, na.rm = TRUE),
+    sd_pt_count = sd(`A 1.1 Cas reçus`, na.rm = TRUE)
+  )
+
+hosp_reliable_dstats <- hosp_reliable_outcomes %>%
+  summarize(
+    mean_utilizationrate = mean(utilizationrate, na.rm = TRUE),
+    sd_utilizationrate = sd(utilizationrate, na.rm = TRUE),
+    mean_neonatal_mort = mean(neonatal_mort, na.rm = TRUE),
+    sd_neonatal_mort = sd(neonatal_mort, na.rm = TRUE),
+    mean_matern_mort = mean(matern_mort, na.rm = TRUE),
+    sd_matern_mort = sd(matern_mort, na.rm = TRUE),
+    mean_matern_compl = mean(matern_compl, na.rm = TRUE),
+    sd_matern_compl = sd(matern_compl, na.rm = TRUE),
+    mean_allcause_mort = mean(allcause_mort, na.rm = TRUE),
+    sd_allcause_mort = sd(allcause_mort, na.rm = TRUE),
+    mean_bloodbags = mean(bloodbags, na.rm = TRUE),
+    sd_bloodbags = sd(bloodbags, na.rm = TRUE),
+    mean_refer_csrTOhgr = mean(refer_csrTOhgr, na.rm = TRUE),
+    sd_refer_csrTOhgr = sd(refer_csrTOhgr, na.rm = TRUE),
+    mean_surg_mort = mean(surg_mort, na.rm = TRUE),
+    sd_surg_mort = sd(surg_mort, na.rm = TRUE),
+    mean_under5_mort = mean(under5_mort, na.rm = TRUE),
+    sd_under5_mort = sd(under5_mort, na.rm = TRUE),
+    mean_resp_mort = mean(resp_mort, na.rm = TRUE),
+    sd_resp_mort = sd(resp_mort, na.rm = TRUE),
+    mean_resp_deathshare = mean(share_respdeath, na.rm = TRUE),
+    sd_resp_deathshare = sd(share_respdeath, na.rm = TRUE),
+    mean_pt_count = mean(`A 1.1 Cas reçus`, na.rm = TRUE),
+    sd_pt_count = sd(`A 1.1 Cas reçus`, na.rm = TRUE)
+  )
+
+
+```
+
+
+## Kiziba and Butembo over time
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+kiziba_outcomes <- csr_outcomes %>%
+  filter(organisationunitname == "nk Kiziba Centre de Santé de Référence") %>%
+  mutate(
+    neonatal_mort = neonatal_mort / 1000,
+    matern_mort = matern_mort / 1000,
+    allcause_mort = allcause_mort / 1000,
+    surg_mort = surg_mort / 1000,
+    under5_mort = under5_mort / 1000,
+    resp_mort = resp_mort / 1000
+  )
+
+# Filter the dataframe for Butembo
+butembo_outcomes <- hospitals_outcomes %>%
+  filter(organisationunitname == "nk Butembo/Kitatumba Hôpital Général de Référence") %>%
+  mutate(
+    neonatal_mort = neonatal_mort / 1000,
+    matern_mort = matern_mort / 1000,
+    allcause_mort = allcause_mort / 1000,
+    surg_mort = surg_mort / 1000,
+    under5_mort = under5_mort / 1000,
+    resp_mort = resp_mort / 1000
+  )
+
+butembo_long <- melt(butembo_outcomes, id.vars = c("organisationunitname", "month_year"), 
+                     measure.vars = c("utilizationrate", "neonatal_mort", 
+                                      "allcause_mort", "surg_mort"))
+
+ggplot(butembo_long, aes(x = month_year, y = value, color = variable)) +
+  geom_line() +
+  labs(title = "Outcomes over time for Butembo", x = "Month", y = "Value (scaled between 0 and 1)") +
+  theme_minimal()
+
+```

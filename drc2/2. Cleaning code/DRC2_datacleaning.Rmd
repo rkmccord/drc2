@@ -1,0 +1,234 @@
+---
+title: "DRC2 data cleaning"
+author: "Ryan McCord"
+date: "2024-09-15"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,tidy.opts=list(width.cutoff=80), tidy=FALSE) 
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+##Import libraries
+library(readxl) #import excel
+library(dplyr) #pipes
+library(reshape2) #reshaping data
+library(lubridate) #to deal with dates
+library(tidyverse) #data wrangling
+library(ggplot2) #for plotting
+library(margins) #for regression analysis
+library(vtable) #for dstats
+library(plm)
+library(stringr)
+library(tidyr)
+library(ggplot2)
+```
+
+## Read in data
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#Create file path
+dps2_filepath <- "C:/Users/rkmcc/Box/2. DRC Energy in Health Facilities/4. Data/DRCDPSdata_Sept2024.xls"
+
+#Import variable names and labels
+##var_names <- read_excel(dps2_filepath, range="A1:FU1", col_names = FALSE)
+var_labels <- read_excel(dps2_filepath, range="A2:FU2", col_names = FALSE)
+
+#Import data
+dps2_RAW <- read_excel(dps2_filepath, skip = 2)
+
+#Assign variable names to data frame
+colnames(dps2_RAW) <- as.character(var_labels[1, ]) ##change to var_names when those get added
+
+# #Create data frame with variable names and labels
+# var_info <- data.frame(
+#   var_names = as.character(var_names[1, ]),
+#   var_labels = as.character(var_labels[1, ])
+# )
+
+# #Make labels more descriptive
+# var_info <- var_info %>%
+#   mutate(var_labels = str_replace_all(var_labels, c("A 2.4" = "Mortality - Maternity - ", "D 9.2" = "Diagnosis - IPD - ", "D 9.3" = "Diagnosis - Surgery - ", "D 9.4" = "Diagnosis - Maternity - ", "A 2.5" = "Community - Maternity - ", "A 4.3" = "Equipment functionality - ", "D 4.11" = "Equipment functionality - ", "D 4.12" = "Equipment functionality - ", "F 2.4" = "Equipment functionality - BCZ - ", "D 11.3" = "Procedures - Surgical - ", "D 9.1" = "Diagnosis - Peds - ", "D 9.6" = "Mortality - ")))
+```
+
+## Summarize missing values
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Summarize missing values overall and by facility type
+missing_summary <- dps2_RAW %>%
+  gather(key = "variable", value = "value", -name, -type, -month) %>%
+  
+  # Calculate the total % missing across all facilities
+  group_by(variable) %>%
+  summarise(total_missing = round(mean(is.na(value)) * 100, 2)) %>%
+  
+  # Calculate missing % by facility type and join
+  left_join(
+    dps2_RAW %>%
+      gather(key = "variable", value = "value", -name, -type, -month) %>%
+      group_by(variable, type) %>%
+      summarise(missing_by_type = round(mean(is.na(value)) * 100, 2), .groups = "drop") %>%
+      pivot_wider(names_from = type, values_from = missing_by_type, names_prefix = "missing_by_type_"),
+    by = "variable"
+  )
+
+# Save the missing summary to a CSV
+write.csv(missing_summary, "C:/Users/rkmcc/Box/2. DRC Energy in Health Facilities/4. Data/DPS2_RAW_missing.csv", row.names = FALSE)
+```
+
+## Calcluate avg and max values for each variable at each facility
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Define the outcome columns (starting from the 4th column)
+outcome_columns <- names(dps2_RAW)[4:ncol(dps2_RAW)]
+
+# Calculate facility averages and max values
+# Pre-calculate facility averages and max values (renamed to facility_var_stats)
+facility_var_stats <- dps2_RAW %>%
+  group_by(name) %>%
+  mutate(across(all_of(outcome_columns), 
+                list(facility_avg = ~ ifelse(all(is.na(.x)), NA, mean(.x, na.rm = TRUE)), 
+                     facility_max = ~ ifelse(all(is.na(.x)), NA, max(.x, na.rm = TRUE))))) %>%
+  ungroup()
+
+```
+
+## Defining rule to replace zeros and track changes
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+zero_replacement <- function(data, outcome_columns, avg_threshold, max_threshold, rule_name) {
+  
+  for (outcome_col in outcome_columns) {
+    
+    # Apply the rule using pre-calculated avg and max
+    data <- data %>%
+      mutate(
+        !!paste0("changed_", rule_name, "_", outcome_col) := ifelse(
+          is.na(.data[[outcome_col]]) & 
+          .data[[paste0(outcome_col, "_facility_avg")]] <= avg_threshold & 
+          .data[[paste0(outcome_col, "_facility_max")]] <= max_threshold, 
+          TRUE, FALSE),
+        
+        # Replace missing values if the condition is met
+        !!outcome_col := ifelse(
+          is.na(.data[[outcome_col]]) & 
+          .data[[paste0(outcome_col, "_facility_avg")]] <= avg_threshold & 
+          .data[[paste0(outcome_col, "_facility_max")]] <= max_threshold, 
+          0, .data[[outcome_col]]
+        )
+      )
+  }
+  
+  return(data)
+}
+```
+
+## Apply rule to different combinations of thresholds
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+avg_thresholds <- c(2.5, 2.5, 2.5, 3, 3, 3, 3.5, 3.5, 3.5, 4, 4, 4)
+max_thresholds <- c(5, 6, 7, 5, 6, 7, 5, 6, 7, 5, 6, 7)
+
+# Initialize a table for results
+results <- vector("list", length(avg_thresholds))
+
+# Loop over each threshold combination
+for (i in seq_along(avg_thresholds)) {
+  avg_thresh <- avg_thresholds[i]
+  max_thresh <- max_thresholds[i]
+  
+  dps2_RAW_test <- zero_replacement(facility_var_stats, outcome_columns, avg_threshold = avg_thresh, max_threshold = max_thresh, rule_name = paste0("avg", avg_thresh, "_max", max_thresh))
+  
+  # Store the results
+  results[[i]] <- data.frame(
+    avg_threshold = avg_thresh,
+    max_threshold = max_thresh,
+    changes_count = sum(dps2_RAW_test[paste0("changed_avg", avg_thresh, "_max", max_thresh, "_", outcome_columns)], na.rm = TRUE)
+  )
+}
+
+# Combine the results into a single data frame
+zero_replacement_summary <- do.call(rbind, results)
+
+# Sort by changes count and write to CSV
+zero_replacement_summary <- zero_replacement_summary %>%
+  arrange(desc(changes_count))
+
+write.csv(zero_replacement_summary, "C:/Users/rkmcc/Box/2. DRC Energy in Health Facilities/4. Data/DPS2_RAW_zeros.csv", row.names = FALSE)
+```
+
+## Identify variables that change between rule with most (avg 4; max 7) and least changes (avg 2.5; max 5)
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+dps2_RAW_with_max7_avg4 <- zero_replacement(facility_var_stats, outcome_columns, avg_threshold = 4, max_threshold = 7, rule_name = "max7_avg4")
+
+dps2_RAW_with_max5_avg2.5 <- zero_replacement(facility_var_stats, outcome_columns, avg_threshold = 2.5, max_threshold = 5, rule_name = "max5_avg2.5")
+
+# Initialize an empty data frame to store the comparison results
+variables_changed_df <- data.frame(
+  variable = character(),
+  changes_count = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Loop through each outcome variable to compare changes between the two rules
+for (outcome_col in outcome_columns) {
+  
+  # Get the 'changed' status for each rule
+  changed_max7_avg4 <- dps2_RAW_with_max7_avg4[[paste0("changed_max7_avg4_", outcome_col)]]
+  changed_max5_avg2.5 <- dps2_RAW_with_max5_avg2.5[[paste0("changed_max5_avg2.5_", outcome_col)]]
+  
+  # Identify where changes occurred in max7_avg4 but not in max5_avg2.5
+  changed_values <- changed_max7_avg4 == TRUE & changed_max5_avg2.5 == FALSE
+  
+  # Count the number of such changes
+  changes_count <- sum(changed_values, na.rm = TRUE)
+  
+  # If there were changes, add the variable and count to the results dataframe
+  if (changes_count > 0) {
+    variables_changed_df <- rbind(variables_changed_df, data.frame(
+      variable = outcome_col,
+      changes_count = changes_count
+    ))
+  }
+}
+
+variables_changed_df <- variables_changed_df %>%
+  arrange(desc(changes_count))
+
+# Save the results to a CSV file
+write.csv(variables_changed_df, "C:/Users/rkmcc/Box/2. DRC Energy in Health Facilities/4. Data/DPS2_RAW_zeros_replacementchanges.csv", row.names = FALSE)
+```
+
+## Recalculate missing value percentages after applying zero replacement (avg 3; max 6)
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+dps2_RAW_int1 <- zero_replacement(facility_var_stats, outcome_columns, avg_threshold = 3, max_threshold = 6, rule_name = "max6_avg3")
+
+# Clean the dataset to remove  '_facility_avg', '_facility_max', and change tracking columns
+dps2_RAW_int1_clean <- dps2_RAW_int1 %>%
+  select(-ends_with("_facility_avg"), -ends_with("_facility_max"), -starts_with("changed_"))
+
+# Summarize the missing values after zero replacement
+missing_summary_updated <- dps2_RAW_int1_clean %>%
+  gather(key = "variable", value = "value", -name, -type, -month) %>%
+  
+  group_by(variable) %>%
+  summarise(total_missing = round(mean(is.na(value)) * 100, 2)) %>%
+  
+  left_join(
+    dps2_RAW_int1_clean %>%
+      gather(key = "variable", value = "value", -name, -type, -month) %>%
+      group_by(variable, type) %>%
+      summarise(missing_by_type = round(mean(is.na(value)) * 100, 2), .groups = "drop") %>%
+      pivot_wider(names_from = type, values_from = missing_by_type, names_prefix = "missing_by_type_"),
+    by = "variable"
+  )
+
+write.csv(missing_summary_updated, "C:/Users/rkmcc/Box/2. DRC Energy in Health Facilities/4. Data/DPS2_missing_zerosreplaced_avg3_max6.csv", row.names = FALSE)
+
+write.csv(dps2_RAW_int1_clean, "C:/Users/rkmcc/Box/2. DRC Energy in Health Facilities/4. Data/DPS2_zerosreplaced_avg3_max6.csv", row.names = FALSE)
+
+
+
+```
